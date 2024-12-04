@@ -1,0 +1,74 @@
+- hosts: all
+  become: true
+  vars_files:
+    - config.yaml
+  tasks:
+    - name: Install Apache (Ubuntu) or HTTPD (CentOS)
+      package:
+        name: "{{ apache_ubuntu if ansible_distribution == 'Ubuntu' else apache_centos }}"
+        state: present
+
+    - name: Start and enable Apache/HTTPD service
+      service:
+        name: "{{ apache_ubuntu if ansible_distribution == 'Ubuntu' else apache_centos }}"
+        state: started
+        enabled: true
+
+    - name: Install prerequisites for Prometheus
+      package:
+        name: "wget"
+        state: present
+
+    - name: Download Prometheus tarball
+      get_url:
+        url: "https://github.com/prometheus/prometheus/releases/download/v{{ prometheus_version }}/prometheus-{{ prometheus_version }}.linux-amd64.tar.gz"
+        dest: /tmp/prometheus.tar.gz
+
+    - name: Extract Prometheus
+      unarchive:
+        src: /tmp/prometheus.tar.gz
+        dest: /opt/
+        remote_src: yes
+
+    - name: Create Prometheus user
+      user:
+        name: prometheus
+        system: yes
+
+    - name: Set ownership for Prometheus directories
+      file:
+        path: "/opt/prometheus-{{ prometheus_version }}.linux-amd64"
+        owner: prometheus
+        group: prometheus
+        state: directory
+        recurse: yes
+
+    - name: Create Prometheus systemd service file
+      copy:
+        dest: /etc/systemd/system/prometheus.service
+        content: |
+          [Unit]
+          Description=Prometheus
+          Wants=network-online.target
+          After=network-online.target
+
+          [Service]
+          User=prometheus
+          Group=prometheus
+          ExecStart=/opt/prometheus-{{ prometheus_version }}.linux-amd64/prometheus \
+            --config.file=/opt/prometheus-{{ prometheus_version }}.linux-amd64/prometheus.yml \
+            --storage.tsdb.path=/opt/prometheus-{{ prometheus_version }}.linux-amd64/data
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Reload systemd and start Prometheus
+      shell: |
+        systemctl daemon-reload
+        systemctl start prometheus
+        systemctl enable prometheus
+
+    - name: Update MOTD to "Ansible Managed by <username>"
+      copy:
+        content: "Ansible Managed by <username>\n"
+        dest: /etc/motd
